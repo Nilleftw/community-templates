@@ -40,6 +40,8 @@ Create one Zabbix host per EMS site and set these host macros:
 | `{$EMS.API.USERNAME}` | EMS account with access to the selected site |
 | `{$EMS.API.PASSWORD}` | Password stored as **Secret text** |
 | `{$EMS.API.PERFMON.EXTENDED}` | `0` by default; set to `1` to query optional diagnostic series |
+| `{$EMS.API.CERTIFICATES.CLIENT.ENABLED}` | `0` by default; set to `1` to query client certificate count (also enable its dependent item) |
+| `{$EMS.API.SYSTEM.REPACKAGER.ENABLED}` | `0` by default; set to `1` to query cloud repackager status (also enable its dependent item) |
 
 Item names show the resolved site name in Latest data. The template does not add a `site:{$EMS.API.SITE}` item tag because Zabbix displays user macros in item tags literally in that view. If site-based problem routing is needed, set a literal host tag such as `site:default` on each EMS host.
 
@@ -53,12 +55,16 @@ Each collection group has one Script master item and dependent metrics. **Disabl
 | Endpoints | `ems.api.endpoints.raw` | 10m | Site | Enabled | Total, online, offline, managed, unmanaged |
 | Security | `ems.api.security.raw` | 30m | Site | Enabled | Vulnerabilities, affected endpoints, profile/tag errors, active forensics |
 | Performance | `ems.api.perfmon.raw` | 5m | Global | Enabled | CPU, RAM, highest disk usage, EMS node count, database latency; optional diagnostics |
-| System | `ems.api.system.raw` | 15m | Global | Enabled | HA members, signature update, upgrade and repackager status |
-| Certificates | `ems.api.certificates.raw` | 1h | Global | Enabled | Certificate counts, expiry within 30 days, earliest expiry |
+| System | `ems.api.system.raw` | 15m | Global | Enabled | HA members, signature update and upgrade status; optional repackager status |
+| Certificates | `ems.api.certificates.raw` | 1h | Global | Enabled | Server certificate count and expiry; optional client certificate count |
 | Alerts | `ems.api.alerts.raw` | 10m | Site | Disabled | Alert count and unread alerts for the API account |
 | Inventory | `ems.api.inventory.raw` | 1h | Global | Disabled | Site and workgroup counts |
 
-The Alerts and Inventory master and dependent items are disabled by default because unread alerts are account-specific and site/workgroup counts rarely change. Performance swap, duplicate online-endpoint count, and CPU-core count are also disabled. The Performance script does not query swap or the duplicate endpoint count. Database connection count, network rates and connections, keep-alive metrics, and per-process CPU/RAM are optional diagnostics: their items are disabled and their Grafana queries are skipped by default. To collect them, set `{$EMS.API.PERFMON.EXTENDED}` to `1` and enable the desired dependent items. For multi-site EMS, enable the global groups on only one host to avoid collecting the same data repeatedly. Some global groups require an EMS account with global administrator access.
+The Alerts and Inventory master and dependent items are disabled by default because unread alerts are account-specific and site/workgroup counts rarely change. Performance swap, duplicate online-endpoint count, and CPU-core count are also disabled. The Performance script does not query swap or the duplicate endpoint count. Database connection count, network rates and connections, keep-alive metrics, and per-process CPU/RAM are optional diagnostics: their items are disabled and their Grafana queries are skipped by default. To collect them, set `{$EMS.API.PERFMON.EXTENDED}` to `1` and enable the desired dependent items. The client certificate count is optional because its endpoint may reject non-super-administrator accounts; set `{$EMS.API.CERTIFICATES.CLIENT.ENABLED}` to `1` and enable `ems.api.certificates.client_total` to collect it. The cloud repackager status request is also optional because it may time out and prevent the other system metrics from updating. To collect it, set `{$EMS.API.SYSTEM.REPACKAGER.ENABLED}` to `1` and enable `ems.api.system.repackager_available`. For multi-site EMS, enable the global groups on only one host to avoid collecting the same data repeatedly.
+
+### EMS administrator permissions
+
+In one non-multitenant FortiClient EMS 7.4.8 installation, both Read-only Administrator and Standard Administrator received HTTP 403 for `client_certificates/index`, `sites/names/index`, and `performance_dashboard/login`; Super Administrator succeeded. This makes Super Administrator the lowest **built-in** role verified for all API groups, but a narrower custom role has not been ruled out. Disable `ems.api.perfmon.raw` and its no-data trigger if the EMS account cannot open the Performance dashboard. Its dependent items will not update. The `Global` scope in the table means that a metric describes the EMS server rather than one site; it does not imply that multitenancy is enabled.
 
 The disk item is the highest usage across all returned volumes, including `/boot` when present. The API data identifies disk devices rather than mount points, so the template does not exclude `/boot` automatically. A full boot partition can also prevent upgrades. Use host-level disk monitoring when mount-specific alerts are needed.
 
@@ -90,7 +96,7 @@ Endpoint online percentage and critical vulnerability triggers are included but 
 
 ## Host dashboard
 
-The template includes **EMS: Overview**, a host dashboard with EPP and ZTNA license summaries, online and offline endpoint counts, 24-hour CPU/RAM/disk graphs, an EPP used-versus-allocated seats graph, and current problems. It uses enabled items only. Open it from the monitored host's Dashboards tab after linking the template.
+The template includes **EMS: Overview**, a host dashboard with EPP and ZTNA license summaries, online and offline endpoint counts, CPU/RAM/disk graphs that follow the dashboard time selector, an EPP used-versus-allocated seats graph, and current problems. It uses enabled items only. Open it from the monitored host's Dashboards tab after linking the template.
 
 ## Data handling and compatibility
 
@@ -114,8 +120,8 @@ The routes below were observed and tested against FortiClient EMS 7.4.8 Linux. A
 | Endpoints | `GET /api/v1/endpoints/count`, `GET /api/v1/endpoints/connection/donut`, `GET /api/v1/endpoints/management/donut` | Endpoint counts and online percentage |
 | Security | `GET /api/v1/vulnerabilities/summary`, `GET /api/v1/profiles/error_count`, `GET /api/v1/tags/zero_trust/error_count`, `GET /api/v1/forensics/active/count` | Vulnerability and error counts |
 | Alerts | `GET /api/v1/alerts/count`, `GET /api/v1/alerts/count_unread` | Alert counts; unread is specific to the API account |
-| System | `GET /api/v1/system/ha/info`, `GET /api/v1/system/signatures/poll`, `GET /api/v1/system/check_upgrade`, `GET /api/v1/system/cloud/repackager/status` | HA, signature, upgrade and repackager status |
-| Certificates | `GET /api/v1/server_certificates/index`, `GET /api/v1/client_certificates/index` | Counts and server certificate expiry summary |
+| System | `GET /api/v1/system/ha/info`, `GET /api/v1/system/signatures/poll`, `GET /api/v1/system/check_upgrade`; optional `GET /api/v1/system/cloud/repackager/status` | HA, signature and upgrade status; optional repackager status |
+| Certificates | `GET /api/v1/server_certificates/index`; optional `GET /api/v1/client_certificates/index` | Server certificate count and expiry summary; optional client certificate count |
 | Inventory | `GET /api/v1/sites/names/index`, `GET /api/v1/workgroups/index` | Site and workgroup counts |
 | Performance | `POST /api/v1/performance_dashboard/login`, `GET /api/v1/performance_dashboard/dashboard_search`, internal Grafana dashboard definition and data query | CPU, RAM, disk, EMS node count and DB latency by default; optional database, network, keep-alive and process diagnostics when extended collection is enabled |
 
